@@ -28,6 +28,7 @@ Garfield transforms scattered project communication into unified, AI-reviewed do
 # Clone the repository
 git clone https://github.com/yourusername/garfield.git
 cd garfield
+```
 
 ## Core Workflow
 
