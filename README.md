@@ -59,7 +59,7 @@ Inspired by [GitLab's async communication handbook](https://handbook.gitlab.com/
 ## Documentation
 
 - [Vision](docs/vision.md) - Full vision and philosophy
-- [Architecture](docs/architecture.md) - System design (coming soon)
+- [Architecture](docs/architecture.md) - System design and Knowledge Ledger framework
 - [API Reference](docs/api.md) - Integration details (coming soon)
 
 ## Tech Stack (TBD)
