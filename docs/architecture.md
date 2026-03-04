@@ -49,7 +49,7 @@ The Knowledge Ledger is built on a well-defined data model. Every piece of infor
 | Entity | Description | Examples |
 |--------|-------------|----------|
 | **Artifact** | A versioned document with lifecycle state | PRD, TRD, DecisionRecord, Ticket, Retro |
-| **Evidence** | A source input with provenance metadata | Transcript segment (with timestamp + speaker), Slack permalink, whiteboard image, commit SHA |
+| **Evidence** | A source input with provenance metadata | Transcript segment (with timestamp + speaker), Slack permalink, whiteboard image, commit SHA, Figma frame reference (file_key + node_id + label) |
 | **Entity** | A named thing in the codebase or system | Service, endpoint, schema, table, feature flag, KPI |
 | **Link** | A typed, directed edge between any two objects | `implements`, `supersedes`, `depends_on`, `decided_by`, `contradicts` |
 | **Approval** | A sign-off record | Who, when, which artifact version, cryptographic hash, policy satisfied |
@@ -62,6 +62,24 @@ Every object has a **stable ID** that survives edits and restructuring:
 - **Artifacts** get monotonic IDs: `PRD-2024-001`, `TRD-2024-015`
 - **Sections** within artifacts get **anchor IDs** (e.g., `TRD-2024-015#auth-flow`) that survive reorganization via content-hash fallback
 - **Evidence** links always include source provenance: transcript timestamp, Slack permalink, image region coordinates, speaker attribution
+
+### Design References
+
+`DesignReference` is a specialized Evidence type for linking UI designs to PRD/TRD sections. It is provider-agnostic via the `DesignArtifactProvider` interface — Figma is the first implementation, with Sketch/XD addable later.
+
+**Structured fields**:
+- `provider`: design tool identifier (e.g., `figma`, `sketch`)
+- `url`: full URL to the design file/frame
+- `file_key`: provider-specific file identifier
+- `node_id`: specific frame/component/page identifier
+- `label`: human-readable description (e.g., "Onboarding flow — Step 3")
+- `rationale`: why this design is linked (e.g., "UI spec for auth screen")
+- `linked_by`: who attached it, when
+- `snapshot_at_signoff`: frozen metadata captured at TRD/PRD sign-off (thumbnail URL, last-modified timestamp, node name, page name)
+
+Design references link specific frames/components to PRD/TRD sections via stable anchor IDs. Garfield stores **pointers** (file_key + node_id) and minimal metadata — never full design files. Enrichment (preview thumbnails, component names, last-modified timestamps) is fetched **on-demand** via the `DesignArtifactProvider`, not by polling or crawling.
+
+When no design tool API is connected, users can still attach design URLs with manually entered labels and optionally upload screenshots — the system degrades gracefully.
 
 ### Versioning & Immutability
 
@@ -95,6 +113,8 @@ The ledger records an immutable event stream for audit and traceability:
 | `DriftDetected` | Code diverges from TRD | PR reference, TRD section, severity |
 | `DivergenceAccepted` | Drift resolved by updating TRD | New TRD revision, code reference |
 | `TicketsGenerated` | TRD decomposed | Ticket IDs, TRD section mappings |
+| `DesignReferenceAttached` | Design linked to artifact section | Provider, file_key, node_id, label, target artifact + section anchor |
+| `DesignDriftDetected` | Design changed since sign-off | DesignReference ID, last-modified at sign-off vs current, artifact version |
 | `Archived` | PR merged + archival | Archive location, final snapshot hash |
 
 ### Entity-Relationship Overview
@@ -127,6 +147,7 @@ The Inception Engine replaces ephemeral meetings with structured capture. It is 
 - Slack threads (threaded context preservation)
 - Zoom/Google Meet transcripts (speaker-tagged decisions)
 - Voice notes (transcription + intent classification)
+- Design files (Figma frame links with embedded previews — via `DesignArtifactProvider`)
 
 All inputs flow through the **PII/Secret Filter** (see [Security & Compliance](#security-privacy--compliance)) before reaching the **Garfield AI Semantic Processor**, which extracts entities (features, constraints, stakeholders, dependencies) and cross-references them against the existing Handbook. A structured **Draft PRD** is generated automatically with **provenance links** back to source evidence.
 
@@ -154,8 +175,9 @@ graph TD
             SL[Slack Thread]
             VN[Voice Note]
             ZT[Zoom Transcript]
+            FIG[Figma Design]
         end
-        WB & SL & VN & ZT --> PII[PII/Secret Filter]
+        WB & SL & VN & ZT & FIG --> PII[PII/Secret Filter]
         PII --> SP[Garfield AI Semantic Processor]
         SP --> EE[AI Entity Extraction<br/>+ Provenance Linking]
         HC[Handbook Context<br/>with Freshness Scores] --> EE
@@ -167,6 +189,8 @@ graph TD
         DED --> PS[PRD Sign-off<br/>Immutable Snapshot + DRI]
     end
 ```
+
+**AI Design Suggestions**: When a PRD references UI screens, flows, or visual components, the AI Semantic Processor can auto-suggest "attach Figma link" — prompting the author to link the relevant design frames before sign-off.
 
 ---
 
@@ -214,11 +238,12 @@ The Execution Engine eliminates the copy-paste breakdown between design and impl
 - **The What**: Task description
 - **The Why**: Deep-link to the originating PRD section (via stable anchor IDs)
 - **The How**: Deep-link to the specific TRD section (via stable anchor IDs)
+- **The Design**: Deep-link to the specific Figma frame/component (via stable `DesignReference`)
 - **Constraints**: Referenced directly from the TRD
 
 Tickets are created in Linear or Jira with deep-link URIs back to the TRD sections.
 
-**IDE Integration via `.garfield/context.md`** — rather than relying on deep-link traversal that AI coding agents can't follow, Garfield generates a `.garfield/context.md` file in the repository when a TRD is signed off. This file contains the relevant technical specs, schema definitions, API contracts, and constraints from the TRD in a format that Cursor, GitHub Copilot, and other AI coding agents can directly consume from the repo.
+**IDE Integration via `.garfield/context.md`** — rather than relying on deep-link traversal that AI coding agents can't follow, Garfield generates a `.garfield/context.md` file in the repository when a TRD is signed off. This file contains the relevant technical specs, schema definitions, API contracts, constraints from the TRD, and relevant design references (frame names, component names, Figma URLs) in a format that Cursor, GitHub Copilot, and other AI coding agents can directly consume from the repo.
 
 **Garfield PR Bot (Advisory-First)** — on pull request submission, the bot runs validation checks. It starts **advisory-only** and escalates enforcement gradually:
 
@@ -302,7 +327,7 @@ All four engines connect in a continuous loop. The output of each phase is the i
 graph TD
     subgraph Phase_1["Phase 1: THE INCEPTION ENGINE"]
         direction TB
-        IN_OFF[In-Office Session] & IN_REM[Remote / Async] & IN_DIR[Direct Input] --> PII_F[PII/Secret Filter]
+        IN_OFF[In-Office Session] & IN_REM[Remote / Async] & IN_DIR[Direct Input] & IN_FIG[Figma Design] --> PII_F[PII/Secret Filter]
         PII_F --> GP[Garfield Processor]
         GP --> AEE[AI Entity Extraction]
         HB_CTX[Handbook Context<br/>with Freshness Scores] --> AEE
@@ -412,8 +437,8 @@ The Context Sentinel is Garfield's design validator. It operates during TRD auth
 
 | Tier | Trigger | Checks | Cost | Latency |
 |------|---------|--------|------|---------|
-| **Tier 1: Deterministic** | On every save / 30s debounce | Symbol existence via prebuilt index, schema name matches, link validation, required section presence | Negligible | < 200ms |
-| **Tier 2: Semantic** | On state transition (Draft → Review) | Cross-file dependency analysis, duplicate detection, handbook cross-reference, PRD alignment | Medium (Vector DB + LLM) | 5-30s |
+| **Tier 1: Deterministic** | On every save / 30s debounce | Symbol existence via prebuilt index, schema name matches, link validation, required section presence, design reference link health (URL valid, accessible) | Negligible | < 200ms |
+| **Tier 2: Semantic** | On state transition (Draft → Review) | Cross-file dependency analysis, duplicate detection, handbook cross-reference, PRD alignment, design drift signal (design last-modified > TRD sign-off timestamp) | Medium (Vector DB + LLM) | 5-30s |
 | **Tier 3: Deep Validation** | On Sign-off | Full semantic analysis, required human confirmations, policy compliance check | High (LLM-heavy) | 30s-2min |
 
 ### Symbol Resolution: LSP/SCIP, Not Just Tree-sitter
@@ -454,11 +479,11 @@ flowchart LR
     end
 
     subgraph Tier1["Tier 1: Deterministic"]
-        T1[Symbol Lookup<br/>Schema Match<br/>Link Validation]
+        T1[Symbol Lookup<br/>Schema Match<br/>Link Validation<br/>Design Ref Health]
     end
 
     subgraph Tier2["Tier 2: Semantic"]
-        T2[Cross-file Analysis<br/>Duplicate Detection<br/>PRD Alignment]
+        T2[Cross-file Analysis<br/>Duplicate Detection<br/>PRD Alignment<br/>Design Drift Signal]
     end
 
     subgraph Tier3["Tier 3: Deep Validation"]
@@ -634,6 +659,7 @@ graph TD
         JIRA[Jira/Linear API]
         GCAL[Google Calendar API]
         GH[GitHub API]
+        FIGMA[Figma API]
     end
 
     API --> Q
@@ -657,6 +683,7 @@ graph TD
 |---------|--------|------------|
 | **LLM provider down** | AI features unavailable | Graceful degradation: deterministic checks still run, AI features show "temporarily unavailable", queue work for retry |
 | **Slack/Zoom API down or rate-limited** | Ingestion delayed | Exponential backoff + dead letter queue; users notified of delay |
+| **Design tool API unavailable** | Enrichment/drift detection unavailable | Graceful degradation: design references remain as URL + manual metadata; enrichment queued for retry |
 | **Vector DB stale/corrupted** | Semantic search returns poor results | Freshness scoring flags stale results; full re-index on corruption detection |
 | **Object storage unavailable** | Can't store transcripts/images | Queue uploads for retry; in-flight processing uses local buffer |
 | **PR Bot blocks incorrectly** | Developer frustrated, velocity blocked | Break glass override (see Execution Engine); all blocks are logged and reviewable |
@@ -798,6 +825,7 @@ Each engine has measurable KPIs to track whether Garfield is delivering value:
 | **Workflow Engine** | Temporal.io (backend orchestration) + XState (frontend UI state) | Temporal: durable backend workflows with retries; XState: document editor state machines |
 | **Calendar Sync** | Google Calendar API | Auto-create documents from events (with consent) |
 | **Ticket Integration** | Linear API / Jira API | Semantic Ticket Genesis |
+| **Design Integration** | Figma REST API (first provider) | Design references, previews, drift detection via `DesignArtifactProvider` interface |
 | **Identity** | SSO/SAML/SCIM | Enterprise authentication and provisioning |
 
 **Note on Vector DB**: For MVP, use **pgvector** as the single vector store — it simplifies operations by keeping embeddings alongside structured data, avoids sync drift, and is sufficient for initial scale. Evaluate dedicated vector DBs (Pinecone, Milvus) only if pgvector performance becomes a bottleneck at scale.
@@ -826,6 +854,9 @@ The roadmap is **re-sequenced to validate value sooner** — starting with trace
 - PII/Secret Filter middleware (basic regex + entropy detection)
 - Automatic Markdown document generation from meetings
 - Basic PRD and TRD templates
+- DesignReference data model (provider-agnostic `DesignArtifactProvider` interface)
+- First-class Figma link support in PRD/TRD editor (URL + file_key + node_id + label + rationale)
+- Optional user-uploaded design screenshot (no Figma API needed initially)
 
 ### Phase 2: Async Collaboration & Deterministic Checks
 
@@ -838,6 +869,8 @@ The roadmap is **re-sequenced to validate value sooner** — starting with trace
 - Configurable archival (git, separate repo, Confluence/Notion export)
 - Event stream recording (canonical events)
 - SSO/SAML integration
+- Figma OAuth integration + on-demand enrichment (preview thumbnails, frame/component names, last-modified)
+- Sentinel Tier 1: design reference link health checks
 
 ### Phase 3: Semantic Intelligence
 
@@ -851,6 +884,8 @@ The roadmap is **re-sequenced to validate value sooner** — starting with trace
 - Handbook freshness scoring + stale entry highlighting
 - Decision Record extraction and cross-document linking
 - Confidence scoring on all AI outputs
+- Sign-off snapshot for design references (freeze metadata at TRD sign-off)
+- Sentinel Tier 2: design drift signal (design changed since sign-off, coarse timestamp comparison) — surfaces as review prompt, not hard gate
 
 ### Phase 4: Execution Bridge
 
@@ -864,6 +899,8 @@ The roadmap is **re-sequenced to validate value sooner** — starting with trace
 - Post-merge lifecycle states (Released, Validated, Rolled Back, Superseded)
 - Retrospective doc auto-generation
 - Tenant isolation (RLS, scoped embeddings) for multi-tenant deployment
+- Design references included in generated tickets and `.garfield/context.md`
+- (Enterprise opt-in) Component/token validation for orgs with mature design systems
 
 ---
 
