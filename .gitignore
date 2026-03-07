@@ -30,3 +30,6 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+pocs/meeting-transcripts/tokens.json
+pocs/meeting-transcripts/client_secret.json
