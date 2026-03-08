@@ -157,10 +157,21 @@ def index():
     output = "<h2>Upcoming Meetings</h2><ul>"
     for event in events:
         summary = event.get("summary", "No title")
+        event_id = event.get("id", "")
         start = event.get("start", {}).get("dateTime", event.get("start", {}).get("date", ""))
         link = detect_meeting_link(event)
         link_html = f' - <a href="{link}">{link}</a>' if link else ""
-        output += f"<li><strong>{summary}</strong> ({start}){link_html}</li>"
+        join_html = ""
+        if link and not storage.get_meeting_by_event_id(event_id):
+            join_html = (
+                f' <form method="post" action="/join" style="display:inline">'
+                f'<input type="hidden" name="event_id" value="{event_id}">'
+                f'<input type="hidden" name="title" value="{summary}">'
+                f'<input type="hidden" name="meet_url" value="{link}">'
+                f'<button type="submit">Join</button>'
+                f'</form>'
+            )
+        output += f"<li><strong>{summary}</strong> ({start}){link_html}{join_html}</li>"
     output += "</ul>"
     return output
 
@@ -170,15 +181,32 @@ def login():
     flow = Flow.from_client_secrets_file(CLIENT_SECRET_FILE, scopes=SCOPES, redirect_uri=REDIRECT_URI)
     auth_url, state = flow.authorization_url(prompt="consent", access_type="offline")
     session["state"] = state
+    session["code_verifier"] = flow.code_verifier
     return redirect(auth_url)
 
 
 @app.route("/oauth/callback")
 def oauth_callback():
     flow = Flow.from_client_secrets_file(CLIENT_SECRET_FILE, scopes=SCOPES, redirect_uri=REDIRECT_URI)
+    flow.code_verifier = session.get("code_verifier")
     flow.fetch_token(authorization_response=request.url)
     credentials = flow.credentials
     save_tokens(credentials)
+    return redirect(url_for("index"))
+
+
+@app.route("/join", methods=["POST"])
+def join():
+    event_id = request.form.get("event_id", "")
+    title = request.form.get("title", "")
+    meet_url = request.form.get("meet_url", "")
+
+    if event_id and meet_url:
+        existing = storage.get_meeting_by_event_id(event_id)
+        if not existing:
+            storage.create_meeting(event_id, title, meet_url, "")
+            spawn_bot(event_id, title, meet_url)
+
     return redirect(url_for("index"))
 
 

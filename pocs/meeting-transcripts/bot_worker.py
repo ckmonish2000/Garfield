@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import storage
 from audio_server import AudioServer
 from browser_driver import run as run_browser
-from transcriber import transcribe
+from transcribe import transcribe
 
 
 def main():
@@ -25,6 +25,13 @@ def main():
     args = parser.parse_args()
 
     storage.init_db()
+
+    # Ensure meeting row exists (needed when running standalone without app.py scheduler)
+    if not storage.get_meeting_by_event_id(args.event_id):
+        storage.create_meeting(
+            args.event_id, args.title, args.url,
+            datetime.now(timezone.utc).isoformat(),
+        )
 
     try:
         # Update status to recording

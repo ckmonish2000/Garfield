@@ -8,7 +8,6 @@ def transcribe(audio_path):
     """
     import torch
     import whisper
-    from pyannote.audio import Pipeline
 
     print(f"[transcriber] Transcribing {audio_path}")
 
@@ -27,6 +26,7 @@ def transcribe(audio_path):
             for s in whisper_segments
         ]
 
+    from pyannote.audio import Pipeline
     pipeline = Pipeline.from_pretrained(
         "pyannote/speaker-diarization-3.1",
         use_auth_token=hf_token,
