@@ -239,6 +239,69 @@ def meeting_detail(meeting_id):
             html += f'<tr><td>{s["speaker"]}</td><td>{start}s - {end}s</td><td>{s["text"]}</td></tr>'
         html += "</table>"
     html += '<p><a href="/meetings">Back to meetings</a></p>'
+
+    # Show specs if available
+    specs = storage.get_specs_for_meeting(meeting_id)
+    if specs:
+        html += "<h3>Generated Specs</h3><ul>"
+        for spec in specs:
+            html += f'<li><a href="/specs/{spec["id"]}">{spec["topic"]}</a> ({spec["status"]})</li>'
+        html += "</ul>"
+    else:
+        html += (
+            f'<form method="post" action="/meetings/{meeting_id}/generate-specs">'
+            '<button type="submit">Generate Specs</button></form>'
+        )
+
+    return html
+
+
+@app.route("/meetings/<int:meeting_id>/generate-specs", methods=["POST"])
+def generate_specs(meeting_id):
+    meeting = storage.get_meeting(meeting_id)
+    if not meeting:
+        return "Meeting not found", 404
+
+    try:
+        pipeline_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
+        sys.path.insert(0, pipeline_dir)
+        from pipeline.graph import run_pipeline
+
+        storage.update_meeting_status(meeting["event_id"], "generating_specs")
+        result = run_pipeline(
+            meeting_id=meeting_id,
+            specs_dir=os.path.join(pipeline_dir, "specs"),
+        )
+        storage.update_meeting_status(meeting["event_id"], "done")
+
+        if result.get("error"):
+            return f"Spec generation warning: {result['error']}", 500
+    except Exception as e:
+        storage.update_meeting_status(meeting["event_id"], "done")
+        return f"Spec generation failed: {e}", 500
+
+    return redirect(f"/meetings/{meeting_id}")
+
+
+@app.route("/specs/<int:spec_id>")
+def spec_detail(spec_id):
+    spec = storage.get_spec(spec_id)
+    if not spec:
+        return "Spec not found", 404
+
+    html = f'<h2>Spec: {spec["topic"]}</h2>'
+    html += f'<p>Status: {spec["status"]} | Created: {spec["created_at"]}</p>'
+
+    # Read markdown file content
+    filepath = spec["spec_file_path"]
+    if filepath and os.path.exists(filepath):
+        with open(filepath, "r") as f:
+            content = f.read()
+        html += f"<pre>{content}</pre>"
+    else:
+        html += "<p>Spec file not found on disk.</p>"
+
+    html += f'<p><a href="/meetings/{spec["meeting_id"]}">Back to meeting</a></p>'
     return html
 
 

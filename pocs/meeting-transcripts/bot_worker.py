@@ -77,6 +77,32 @@ def main():
         storage.update_meeting_status(args.event_id, "done")
         print(f"[worker] Done. {len(segments)} segments transcribed.")
 
+        # Generate specs from transcript
+        try:
+            storage.update_meeting_status(args.event_id, "generating_specs")
+            print("[worker] Generating specs from transcript...")
+
+            # Add pipeline to path
+            pipeline_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
+            sys.path.insert(0, pipeline_dir)
+            from pipeline.graph import run_pipeline
+
+            result = run_pipeline(
+                meeting_id=meeting["id"],
+                specs_dir=os.path.join(pipeline_dir, "specs"),
+            )
+
+            if result.get("error"):
+                print(f"[worker] Spec generation warning: {result['error']}")
+            else:
+                num_specs = len(result.get("specs", []))
+                print(f"[worker] Generated {num_specs} spec(s).")
+
+            storage.update_meeting_status(args.event_id, "done")
+        except Exception as spec_err:
+            print(f"[worker] Spec generation failed (non-fatal): {spec_err}")
+            storage.update_meeting_status(args.event_id, "done")
+
     except Exception as e:
         print(f"[worker] Error: {e}")
         traceback.print_exc()

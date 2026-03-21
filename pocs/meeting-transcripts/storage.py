@@ -40,6 +40,16 @@ def init_db():
                 text TEXT,
                 FOREIGN KEY (meeting_id) REFERENCES meetings(id)
             );
+            CREATE TABLE IF NOT EXISTS specs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                meeting_id INTEGER NOT NULL,
+                topic TEXT,
+                spec_file_path TEXT,
+                status TEXT NOT NULL DEFAULT 'draft',
+                created_at TEXT,
+                graph_run_id TEXT,
+                FOREIGN KEY (meeting_id) REFERENCES meetings(id)
+            );
         """)
 
 
@@ -96,3 +106,32 @@ def get_transcript(meeting_id):
             "SELECT * FROM transcript_segments WHERE meeting_id = ? ORDER BY start_seconds",
             (meeting_id,),
         ).fetchall()
+
+
+def insert_spec(meeting_id, topic, spec_file_path, status="draft", graph_run_id=None):
+    from datetime import datetime, timezone
+
+    with get_db() as conn:
+        cursor = conn.execute(
+            "INSERT INTO specs (meeting_id, topic, spec_file_path, status, created_at, graph_run_id) VALUES (?, ?, ?, ?, ?, ?)",
+            (meeting_id, topic, spec_file_path, status, datetime.now(timezone.utc).isoformat(), graph_run_id),
+        )
+        return cursor.lastrowid
+
+
+def get_specs_for_meeting(meeting_id):
+    with get_db() as conn:
+        return conn.execute(
+            "SELECT * FROM specs WHERE meeting_id = ? ORDER BY id",
+            (meeting_id,),
+        ).fetchall()
+
+
+def get_spec(spec_id):
+    with get_db() as conn:
+        return conn.execute("SELECT * FROM specs WHERE id = ?", (spec_id,)).fetchone()
+
+
+def update_spec_status(spec_id, status):
+    with get_db() as conn:
+        conn.execute("UPDATE specs SET status = ? WHERE id = ?", (status, spec_id))
