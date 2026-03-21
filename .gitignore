@@ -32,6 +32,7 @@ go.work.sum
 # .vscode/
 
 .mcp.json
+.worktrees/
 pocs/
 pocs/meeting-transcripts/tokens.json
 pocs/meeting-transcripts/client_secret.json
