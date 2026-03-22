@@ -67,6 +67,8 @@ All inputs flow through the **Garfield AI Semantic Processor**, which extracts e
 
 The phase ends with **PRD Sign-off** and a Directly Responsible Individual (DRI) assigned.
 
+> **Implementation**: The transcript-to-spec pipeline (`pipeline/`) is the first concrete implementation of the Inception Engine. It takes diarized meeting transcripts and produces structured, agent-friendly specifications using a LangGraph-based agentic workflow with self-correction. See the [Transcript-to-Spec Pipeline Guide](./transcript-to-spec-pipeline.md) for details.
+
 ```mermaid
 graph TD
     subgraph INCEPTION["Phase 1: THE INCEPTION ENGINE"]

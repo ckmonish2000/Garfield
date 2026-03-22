@@ -36,6 +36,7 @@ Garfield is an async-first workflow tool that unifies project context from conce
 - Automatic sync with Google Calendar
 - Each meeting generates a unified document on the dashboard
 - All discussions, decisions, and action items captured in one place
+- Meeting transcripts are automatically converted into structured specs via the [Transcript-to-Spec Pipeline](./transcript-to-spec-pipeline.md)
 
 #### 2. Async PRD Development
 - Team members comment and ask questions directly on documents
