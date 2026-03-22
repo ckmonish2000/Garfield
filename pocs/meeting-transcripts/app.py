@@ -5,6 +5,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from datetime import datetime, timezone, timedelta
 
 from flask import Flask, redirect, request, session, url_for
@@ -154,7 +155,8 @@ def index():
         return '<a href="/login">Login with Google</a>'
 
     events = get_events(credentials)
-    output = "<h2>Upcoming Meetings</h2><ul>"
+    output = '<p><a href="/upload">Upload Recording</a> | <a href="/meetings">All Meetings</a></p>'
+    output += "<h2>Upcoming Meetings</h2><ul>"
     for event in events:
         summary = event.get("summary", "No title")
         event_id = event.get("id", "")
@@ -213,7 +215,8 @@ def join():
 @app.route("/meetings")
 def meetings_list():
     rows = storage.get_meetings()
-    html = "<h2>Meetings</h2><table border='1' cellpadding='8'><tr><th>ID</th><th>Title</th><th>Start</th><th>Status</th><th>Transcript</th></tr>"
+    html = '<p><a href="/upload">Upload Recording</a></p>'
+    html += "<h2>Meetings</h2><table border='1' cellpadding='8'><tr><th>ID</th><th>Title</th><th>Start</th><th>Status</th><th>Transcript</th></tr>"
     for m in rows:
         link = f'<a href="/meetings/{m["id"]}">View</a>' if m["status"] == "done" else ""
         html += f'<tr><td>{m["id"]}</td><td>{m["title"]}</td><td>{m["start_time"]}</td><td>{m["status"]}</td><td>{link}</td></tr>'
@@ -303,6 +306,89 @@ def spec_detail(spec_id):
 
     html += f'<p><a href="/meetings/{spec["meeting_id"]}">Back to meeting</a></p>'
     return html
+
+
+ALLOWED_EXTENSIONS = {".wav", ".mp3", ".mp4"}
+RECORDINGS_DIR = os.path.join(BASE_DIR, "recordings")
+
+
+@app.route("/upload")
+def upload_form():
+    html = "<h2>Upload Meeting Recording</h2>"
+    html += (
+        '<form method="post" action="/upload" enctype="multipart/form-data">'
+        '<p><label>Audio/Video File (.wav, .mp3, .mp4):<br>'
+        '<input type="file" name="audio_file" accept=".wav,.mp3,.mp4" required></label></p>'
+        '<p><label>Meeting Title (optional):<br>'
+        '<input type="text" name="title" placeholder="My Meeting" size="40"></label></p>'
+        '<p><button type="submit">Upload &amp; Transcribe</button></p>'
+        '</form>'
+        '<p><a href="/meetings">Back to meetings</a></p>'
+    )
+    return html
+
+
+@app.route("/upload", methods=["POST"])
+def upload_handler():
+    file = request.files.get("audio_file")
+    if not file or file.filename == "":
+        return "No file selected", 400
+
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        return f"Unsupported format '{ext}'. Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}", 400
+
+    title = request.form.get("title", "").strip() or os.path.splitext(file.filename)[0]
+    event_id = f"upload-{uuid.uuid4().hex[:12]}"
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Save uploaded file
+    os.makedirs(RECORDINGS_DIR, exist_ok=True)
+    safe_filename = f"{event_id}{ext}"
+    audio_path = os.path.join(RECORDINGS_DIR, safe_filename)
+    file.save(audio_path)
+
+    # Create meeting record
+    meeting_id = storage.create_meeting(event_id, title, "file-upload", now)
+
+    try:
+        # Transcribe
+        storage.update_meeting_status(event_id, "transcribing", audio_file_path=audio_path)
+        print(f"[upload] Transcribing {audio_path}...")
+
+        # Import transcribe from root
+        root_dir = os.path.join(BASE_DIR, "..", "..")
+        sys.path.insert(0, root_dir)
+        from transcribe import transcribe
+
+        segments = transcribe(audio_path)
+        storage.insert_segments(meeting_id, segments)
+        print(f"[upload] Transcribed {len(segments)} segments")
+
+        # Generate specs
+        try:
+            storage.update_meeting_status(event_id, "generating_specs")
+            from pipeline.graph import run_pipeline
+
+            result = run_pipeline(
+                meeting_id=meeting_id,
+                specs_dir=os.path.join(root_dir, "specs"),
+            )
+            if result.get("error"):
+                print(f"[upload] Spec generation warning: {result['error']}")
+            else:
+                print(f"[upload] Generated {len(result.get('specs', []))} spec(s)")
+        except Exception as spec_err:
+            print(f"[upload] Spec generation failed (non-fatal): {spec_err}")
+
+        storage.update_meeting_status(event_id, "done")
+
+    except Exception as e:
+        print(f"[upload] Error: {e}")
+        storage.update_meeting_status(event_id, "error")
+        return f"Transcription failed: {e}", 500
+
+    return redirect(f"/meetings/{meeting_id}")
 
 
 if __name__ == "__main__":

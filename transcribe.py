@@ -10,7 +10,7 @@ import torch
 from pydub import AudioSegment
 from nemo.collections.asr.models import EncDecMultiTaskModel
 
-SUPPORTED_FORMATS = {".wav", ".mp4"}
+SUPPORTED_FORMATS = {".wav", ".mp3", ".mp4"}
 LARGE_FILE_THRESHOLD = 500 * 1024 * 1024  # 500 MB
 MODEL_NAME = "nvidia/canary-1b-flash"
 DEFAULT_CHUNK_LENGTH = 30  # seconds
@@ -36,7 +36,7 @@ def _prepare_audio(input_path, ext):
 
     print(f"--- Converting {input_path} to 16kHz Mono WAV ---")
     try:
-        fmt = "mp4" if ext == ".mp4" else "wav"
+        fmt = ext.lstrip(".")
         audio = AudioSegment.from_file(input_path, format=fmt)
         audio = audio.set_frame_rate(16000).set_channels(1)
     except Exception as e:
